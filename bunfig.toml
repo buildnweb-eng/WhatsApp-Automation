@@ -1,0 +1,8 @@
+[install]
+# Install peer dependencies automatically
+peer = true
+
+[run]
+# Enable source maps for better error traces
+smol = false
+

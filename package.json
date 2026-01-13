@@ -1,0 +1,28 @@
+{
+  "name": "whatsapp-catalog-automation",
+  "version": "1.0.0",
+  "description": "WhatsApp Native Catalog automation with Razorpay payments - Built with Elysia & Bun",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir ./dist --target bun",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "elysia": "^1.0.12",
+    "mongoose": "^8.0.3",
+    "razorpay": "^2.9.2",
+    "axios": "^1.6.2",
+    "zod": "^3.22.4",
+    "pino": "^8.17.2",
+    "pino-pretty": "^10.3.1",
+    "nanoid": "^5.0.4"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.3.3"
+  }
+}
+
