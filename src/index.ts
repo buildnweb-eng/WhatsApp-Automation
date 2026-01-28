@@ -32,6 +32,7 @@ async function bootstrap() {
     // Request logging middleware
     .onRequest(({ request }) => {
       const url = new URL(request.url);
+      console.log(`→ ${request.method} ${url.pathname}`);
       logger.debug(
         { method: request.method, path: url.pathname },
         '→ Incoming request'
@@ -54,11 +55,14 @@ async function bootstrap() {
     .use(adminRoutes)
 
     // Root endpoint
-    .get('/', () => ({
-      name: 'WhatsApp Catalog Automation',
-      version: '1.0.0',
-      status: 'running',
-    }))
+    .get('/', () => {
+      console.log('🏠 Root endpoint called!');
+      return {
+        name: 'WhatsApp Catalog Automation',
+        version: '1.0.0',
+        status: 'running',
+      };
+    })
 
     // Payment success redirect (after Razorpay payment)
     .get('/payment/success', ({ query }) => {

@@ -52,6 +52,9 @@ export const whatsappRoutes = new Elysia({ prefix: '/webhook/whatsapp' })
     async ({ body }) => {
       try {
         const payload = body as WhatsAppWebhookPayload;
+        
+        console.log('🔔 Webhook POST received:', JSON.stringify(payload, null, 2));
+        logger.info({ payload }, '🔔 Webhook POST received');
 
         // Validate payload structure
         if (payload.object !== 'whatsapp_business_account') {

@@ -136,21 +136,23 @@ export class MessageHandler {
     }
 
     // Calculate totals and build cart
-    let totalInPaise = 0;
+    // WhatsApp sends item_price in RUPEES, not paise
+    let totalInRupees = 0;
     const cartItems = items.map((item) => {
-      const itemTotal = item.item_price * item.quantity;
-      totalInPaise += itemTotal;
-      
+      const priceInRupees = item.item_price;
+      const itemTotal = priceInRupees * item.quantity;
+      totalInRupees += itemTotal;
+
       return {
         productId: item.product_retailer_id,
         quantity: item.quantity,
-        priceInPaise: item.item_price,
-        priceInRupees: item.item_price / 100,
-        totalInRupees: itemTotal / 100,
+        priceInPaise: priceInRupees * 100,  // Convert to paise for Razorpay
+        priceInRupees: priceInRupees,
+        totalInRupees: itemTotal,
       };
     });
 
-    const totalInRupees = totalInPaise / 100;
+    const totalInPaise = totalInRupees * 100;  // For Razorpay
 
     // Update conversation with cart
     await conversationRepository.updateByPhoneNumber(from, {
