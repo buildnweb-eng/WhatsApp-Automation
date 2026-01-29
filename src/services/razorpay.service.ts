@@ -3,18 +3,38 @@ import crypto from 'crypto';
 import { config } from '@/config/env';
 import { logger } from '@/utils/logger';
 import type { CreatePaymentLinkOptions, PaymentLinkResponse } from '@/domain/types';
+import type { RazorpayConfig } from '@/domain/types/tenant.types';
 
 /**
  * Razorpay Payment Service
+ * Can be instantiated with tenant-specific config or use global config
  */
 export class RazorpayService {
   private readonly razorpay: Razorpay;
+  private readonly serviceConfig: RazorpayConfig;
+  private readonly appUrl: string;
 
-  constructor() {
-    this.razorpay = new Razorpay({
-      key_id: config.razorpay.keyId,
-      key_secret: config.razorpay.keySecret,
-    });
+  constructor(tenantConfig?: { razorpay: RazorpayConfig; appUrl?: string }) {
+    if (tenantConfig) {
+      this.serviceConfig = tenantConfig.razorpay;
+      this.appUrl = tenantConfig.appUrl || config.app.url;
+      this.razorpay = new Razorpay({
+        key_id: tenantConfig.razorpay.keyId,
+        key_secret: tenantConfig.razorpay.keySecret,
+      });
+    } else {
+      // Legacy: use global config for backward compatibility
+      this.serviceConfig = {
+        keyId: config.razorpay.keyId,
+        keySecret: config.razorpay.keySecret,
+        webhookSecret: config.razorpay.webhookSecret,
+      };
+      this.appUrl = config.app.url;
+      this.razorpay = new Razorpay({
+        key_id: config.razorpay.keyId,
+        key_secret: config.razorpay.keySecret,
+      });
+    }
   }
 
   /**
@@ -44,7 +64,7 @@ export class RazorpayService {
           order_id: options.orderId,
           phone: options.customerPhone,
         },
-        callback_url: `${config.app.url}/payment/success`,
+        callback_url: `${this.appUrl}/payment/success`,
         callback_method: 'get',
         expire_by: Math.floor(Date.now() / 1000) + (24 * 60 * 60), // 24 hours
       });
@@ -97,7 +117,7 @@ export class RazorpayService {
   verifyWebhookSignature(body: string, signature: string): boolean {
     try {
       const expectedSignature = crypto
-        .createHmac('sha256', config.razorpay.webhookSecret)
+        .createHmac('sha256', this.serviceConfig.webhookSecret)
         .update(body)
         .digest('hex');
 

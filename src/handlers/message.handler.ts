@@ -1,7 +1,8 @@
 import { config } from '@/config/env';
 import { logger } from '@/utils/logger';
 import { conversationRepository } from '@/repositories';
-import { whatsappService } from '@/services';
+import { WhatsAppService } from '@/services/whatsapp.service';
+import { serviceFactory } from '@/services/service-factory';
 import { orderHandler } from './order.handler';
 import {
   ConversationState,
@@ -9,30 +10,34 @@ import {
   type WhatsAppOrderMessage,
   type WhatsAppInteractiveMessage,
 } from '@/domain/types';
+import type { TenantConfig } from '@/domain/types/tenant.types';
 import type { ConversationDocument } from '@/domain/models';
 
 /**
- * Message Handler - Core state machine logic
+ * Message Handler - Core state machine logic (Multi-tenant aware)
  */
 export class MessageHandler {
   /**
-   * Process incoming message
+   * Process incoming message with tenant context
    */
-  async processMessage(context: ProcessedMessageContext): Promise<void> {
-    const { from, name, type, message } = context;
-    
+  async processMessage(context: ProcessedMessageContext, tenantConfig: TenantConfig): Promise<void> {
+    const { from, name, type, message, tenantId } = context;
+
     logger.info(
-      { from, name, type, messageId: message.id },
+      { from, name, type, messageId: message.id, tenantId },
       '📨 Processing incoming message'
     );
 
+    // Get tenant-scoped WhatsApp service
+    const whatsappService = serviceFactory.getWhatsAppService(tenantConfig);
+
     try {
-      // Get or create conversation
-      const conversation = await conversationRepository.getOrCreate(from);
+      // Get or create conversation for this tenant
+      const conversation = await conversationRepository.getOrCreate(tenantId, from);
 
       // Update customer name if available
       if (name && !conversation.customerName) {
-        await conversationRepository.updateByPhoneNumber(from, { customerName: name });
+        await conversationRepository.updateByPhoneNumber(tenantId, from, { customerName: name });
         conversation.customerName = name;
       }
 
@@ -42,23 +47,23 @@ export class MessageHandler {
       // Route based on message type
       switch (type) {
         case 'text':
-          await this.handleTextMessage(from, message.text!.body, conversation);
+          await this.handleTextMessage(from, message.text!.body, conversation, tenantConfig, whatsappService);
           break;
 
         case 'order':
-          await this.handleOrderMessage(from, message.order!, conversation);
+          await this.handleOrderMessage(from, message.order!, conversation, tenantConfig, whatsappService);
           break;
 
         case 'interactive':
-          await this.handleInteractiveMessage(from, message.interactive!, conversation);
+          await this.handleInteractiveMessage(from, message.interactive!, conversation, tenantConfig, whatsappService);
           break;
 
         default:
-          await this.handleUnsupportedMessage(from, type);
+          await this.handleUnsupportedMessage(from, type, whatsappService);
       }
     } catch (error) {
-      logger.error({ error, from, type }, '❌ Error processing message');
-      await this.sendErrorMessage(from);
+      logger.error({ error, from, type, tenantId }, '❌ Error processing message');
+      await this.sendErrorMessage(from, whatsappService);
     }
   }
 
@@ -68,50 +73,53 @@ export class MessageHandler {
   private async handleTextMessage(
     from: string,
     text: string,
-    conversation: ConversationDocument
+    conversation: ConversationDocument,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
   ): Promise<void> {
     const normalizedText = text.toLowerCase().trim();
-    
+    const tenantId = tenantConfig.tenantId;
+
     logger.debug(
-      { from, text: text.substring(0, 50), state: conversation.state },
+      { from, text: text.substring(0, 50), state: conversation.state, tenantId },
       '💬 Handling text message'
     );
 
     // Global commands (work in any state)
     if (this.isRestartCommand(normalizedText)) {
-      await this.handleRestart(from);
+      await this.handleRestart(from, tenantConfig, whatsappService);
       return;
     }
 
     if (this.isHelpCommand(normalizedText)) {
-      await this.sendHelpMessage(from);
+      await this.sendHelpMessage(from, tenantConfig, whatsappService);
       return;
     }
 
     // State-based handling
     switch (conversation.state) {
       case ConversationState.NEW:
-        await this.handleNewCustomer(from);
+        await this.handleNewCustomer(from, tenantConfig, whatsappService);
         break;
 
       case ConversationState.BROWSING:
-        await this.handleBrowsingState(from, text);
+        await this.handleBrowsingState(from, text, whatsappService);
         break;
 
       case ConversationState.AWAITING_ADDRESS:
-        await orderHandler.processAddress(from, text, conversation);
+        await orderHandler.processAddress(from, text, conversation, tenantConfig);
         break;
 
       case ConversationState.AWAITING_PAYMENT:
-        await this.handleAwaitingPaymentState(from, conversation);
+        await this.handleAwaitingPaymentState(from, conversation, whatsappService);
         break;
 
       case ConversationState.COMPLETED:
-        await this.handleCompletedState(from);
+        await this.handleCompletedState(from, whatsappService);
         break;
 
       default:
-        await this.handleNewCustomer(from);
+        await this.handleNewCustomer(from, tenantConfig, whatsappService);
     }
   }
 
@@ -121,9 +129,12 @@ export class MessageHandler {
   private async handleOrderMessage(
     from: string,
     order: WhatsAppOrderMessage,
-    conversation: ConversationDocument
+    conversation: ConversationDocument,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
   ): Promise<void> {
-    logger.info({ from, catalogId: order.catalog_id }, '🛒 Processing order message');
+    const tenantId = tenantConfig.tenantId;
+    logger.info({ from, catalogId: order.catalog_id, tenantId }, '🛒 Processing order message');
 
     const items = order.product_items || [];
 
@@ -155,7 +166,7 @@ export class MessageHandler {
     const totalInPaise = totalInRupees * 100;  // For Razorpay
 
     // Update conversation with cart
-    await conversationRepository.updateByPhoneNumber(from, {
+    await conversationRepository.updateByPhoneNumber(tenantId, from, {
       state: ConversationState.AWAITING_ADDRESS,
       cart: {
         catalogId: order.catalog_id,
@@ -176,36 +187,40 @@ export class MessageHandler {
   private async handleInteractiveMessage(
     from: string,
     interactive: WhatsAppInteractiveMessage,
-    conversation: ConversationDocument
+    conversation: ConversationDocument,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
   ): Promise<void> {
+    const tenantId = tenantConfig.tenantId;
+
     if (interactive.button_reply) {
       const buttonId = interactive.button_reply.id;
-      logger.debug({ from, buttonId }, '🔘 Button clicked');
+      logger.debug({ from, buttonId, tenantId }, '🔘 Button clicked');
 
       switch (buttonId) {
         case 'view_catalog':
           await whatsappService.sendCatalogMessage(from);
-          await conversationRepository.updateByPhoneNumber(from, {
+          await conversationRepository.updateByPhoneNumber(tenantId, from, {
             state: ConversationState.BROWSING,
           });
           break;
 
         case 'restart':
-          await this.handleRestart(from);
+          await this.handleRestart(from, tenantConfig, whatsappService);
           break;
 
         case 'help':
-          await this.sendHelpMessage(from);
+          await this.sendHelpMessage(from, tenantConfig, whatsappService);
           break;
 
         default:
-          logger.warn({ buttonId }, '⚠️ Unknown button clicked');
+          logger.warn({ buttonId, tenantId }, '⚠️ Unknown button clicked');
       }
     }
 
     if (interactive.list_reply) {
       const listId = interactive.list_reply.id;
-      logger.debug({ from, listId }, '📋 List item selected');
+      logger.debug({ from, listId, tenantId }, '📋 List item selected');
       // Handle list selections if needed
     }
   }
@@ -213,14 +228,18 @@ export class MessageHandler {
   /**
    * Handle new customer - send greeting
    */
-  private async handleNewCustomer(from: string): Promise<void> {
-    const greeting = this.buildGreetingMessage();
-    
+  private async handleNewCustomer(
+    from: string,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
+  ): Promise<void> {
+    const greeting = this.buildGreetingMessage(tenantConfig);
+
     await whatsappService.sendButtonMessage(from, greeting, [
       { id: 'view_catalog', title: '🛍️ View Collection' },
     ]);
 
-    await conversationRepository.updateByPhoneNumber(from, {
+    await conversationRepository.updateByPhoneNumber(tenantConfig.tenantId, from, {
       state: ConversationState.BROWSING,
     });
   }
@@ -228,7 +247,11 @@ export class MessageHandler {
   /**
    * Handle browsing state
    */
-  private async handleBrowsingState(from: string, text: string): Promise<void> {
+  private async handleBrowsingState(
+    from: string,
+    text: string,
+    whatsappService: WhatsAppService
+  ): Promise<void> {
     // Check if customer wants to see catalog
     if (this.isCatalogRequest(text.toLowerCase())) {
       await whatsappService.sendCatalogMessage(from);
@@ -249,7 +272,8 @@ export class MessageHandler {
    */
   private async handleAwaitingPaymentState(
     from: string,
-    conversation: ConversationDocument
+    conversation: ConversationDocument,
+    whatsappService: WhatsAppService
   ): Promise<void> {
     const message =
       `Please complete your payment using the link I sent earlier.\n\n` +
@@ -262,7 +286,7 @@ export class MessageHandler {
   /**
    * Handle completed state
    */
-  private async handleCompletedState(from: string): Promise<void> {
+  private async handleCompletedState(from: string, whatsappService: WhatsAppService): Promise<void> {
     await whatsappService.sendButtonMessage(
       from,
       `Thank you for your order! 🙏\n\n` +
@@ -274,18 +298,26 @@ export class MessageHandler {
   /**
    * Handle restart command
    */
-  private async handleRestart(from: string): Promise<void> {
-    await conversationRepository.resetConversation(from);
-    await this.handleNewCustomer(from);
-    logger.info({ from }, '🔄 Conversation restarted');
+  private async handleRestart(
+    from: string,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
+  ): Promise<void> {
+    await conversationRepository.resetConversation(tenantConfig.tenantId, from);
+    await this.handleNewCustomer(from, tenantConfig, whatsappService);
+    logger.info({ from, tenantId: tenantConfig.tenantId }, '🔄 Conversation restarted');
   }
 
   /**
    * Handle unsupported message types
    */
-  private async handleUnsupportedMessage(from: string, type: string): Promise<void> {
+  private async handleUnsupportedMessage(
+    from: string,
+    type: string,
+    whatsappService: WhatsAppService
+  ): Promise<void> {
     logger.warn({ from, type }, '⚠️ Unsupported message type');
-    
+
     await whatsappService.sendTextMessage(
       from,
       "Sorry, I can only process text messages and orders from our catalog. 🙏\n\n" +
@@ -296,7 +328,7 @@ export class MessageHandler {
   /**
    * Send error message
    */
-  private async sendErrorMessage(from: string): Promise<void> {
+  private async sendErrorMessage(from: string, whatsappService: WhatsAppService): Promise<void> {
     try {
       await whatsappService.sendTextMessage(
         from,
@@ -310,7 +342,11 @@ export class MessageHandler {
   /**
    * Send help message
    */
-  private async sendHelpMessage(from: string): Promise<void> {
+  private async sendHelpMessage(
+    from: string,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
+  ): Promise<void> {
     const helpMessage =
       `*How to Order:* 📦\n\n` +
       `1️⃣ Browse our collection\n` +
@@ -322,17 +358,22 @@ export class MessageHandler {
       `• _catalog_ - View our collection\n` +
       `• _restart_ - Start a new order\n` +
       `• _help_ - Show this message\n\n` +
-      `Need human assistance? Call us at ${config.business.phone}`;
+      `Need human assistance? Call us at ${tenantConfig.businessPhone}`;
 
     await whatsappService.sendTextMessage(from, helpMessage);
   }
 
   /**
-   * Build greeting message
+   * Build greeting message using tenant config
    */
-  private buildGreetingMessage(): string {
+  private buildGreetingMessage(tenantConfig: TenantConfig): string {
+    const customMessage = tenantConfig.settings.welcomeMessage;
+    if (customMessage) {
+      return customMessage;
+    }
+
     return (
-      `🙏 *Welcome to ${config.business.name}!*\n\n` +
+      `🙏 *Welcome to ${tenantConfig.businessName}!*\n\n` +
       `We have a beautiful collection of handpicked items waiting for you.\n\n` +
       `Click the button below to browse our collection. Add items you like to your cart, ` +
       `and send the cart when you're ready to order!`
@@ -347,19 +388,19 @@ export class MessageHandler {
     total: number
   ): string {
     let summary = "✨ *Great choices!* Here's your order:\n\n";
-    
+
     items.forEach((item, index) => {
       summary += `${index + 1}. ${item.productId}\n`;
       summary += `   Qty: ${item.quantity} × ₹${item.priceInRupees} = ₹${item.totalInRupees}\n`;
     });
-    
+
     summary += `\n*Total: ₹${total}*\n\n`;
     summary += `📍 To calculate shipping and generate your bill, please reply with your *complete delivery address* including:\n`;
     summary += `• House/Flat number\n`;
     summary += `• Street name\n`;
     summary += `• City, State\n`;
     summary += `• PIN code`;
-    
+
     return summary;
   }
 
@@ -390,4 +431,3 @@ export class MessageHandler {
 
 // Singleton instance
 export const messageHandler = new MessageHandler();
-

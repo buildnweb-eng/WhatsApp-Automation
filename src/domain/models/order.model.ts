@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 import { OrderStatus, PaymentStatus, type PaymentDetails, type ShippingAddress, type OrderItem } from '../types/order.types';
 
 export interface OrderDocument extends Document {
+  tenantId: string;
   orderId: string;
   phoneNumber: string;
   customerName?: string;
@@ -51,10 +52,14 @@ const PaymentDetailsSchema = new Schema({
 
 const OrderSchema = new Schema<OrderDocument>(
   {
+    tenantId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     orderId: {
       type: String,
       required: true,
-      unique: true,
       index: true,
     },
     phoneNumber: {
@@ -103,9 +108,12 @@ const OrderSchema = new Schema<OrderDocument>(
   }
 );
 
-// Compound indexes for common queries
-OrderSchema.index({ phoneNumber: 1, createdAt: -1 });
-OrderSchema.index({ status: 1, createdAt: -1 });
+// Compound indexes for multi-tenant queries
+OrderSchema.index({ tenantId: 1, orderId: 1 }, { unique: true });
+OrderSchema.index({ tenantId: 1, phoneNumber: 1, createdAt: -1 });
+OrderSchema.index({ tenantId: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ tenantId: 1, 'payment.paymentLinkId': 1 });
+// Global index for payment link lookups (needed for Razorpay webhook)
 OrderSchema.index({ 'payment.paymentLinkId': 1 });
 
 export const OrderModel = mongoose.model<OrderDocument>('Order', OrderSchema);

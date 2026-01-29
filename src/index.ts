@@ -8,6 +8,7 @@ import {
   healthRoutes,
   adminRoutes,
 } from './routes';
+import { tenantRoutes } from './routes/tenant.routes';
 
 /**
  * Application Bootstrap
@@ -53,6 +54,7 @@ async function bootstrap() {
     .use(whatsappRoutes)
     .use(razorpayRoutes)
     .use(adminRoutes)
+    .use(tenantRoutes)
 
     // Root endpoint
     .get('/', () => {
@@ -164,6 +166,7 @@ async function bootstrap() {
 ║   • WhatsApp:  POST /webhook/whatsapp                         ║
 ║   • Razorpay:  POST /webhook/razorpay                         ║
 ║   • Admin:     GET  /admin/*                                  ║
+║   • Tenants:   GET  /api/tenants/*                            ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);

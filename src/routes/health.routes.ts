@@ -1,6 +1,8 @@
 import { Elysia } from 'elysia';
 import mongoose from 'mongoose';
-import { conversationRepository, orderRepository } from '@/repositories';
+import { ConversationModel } from '@/domain/models/conversation.model';
+import { OrderModel } from '@/domain/models/order.model';
+import { TenantModel } from '@/domain/models/tenant.model';
 
 /**
  * Health Check Routes
@@ -41,19 +43,66 @@ export const healthRoutes = new Elysia()
   })
 
   /**
-   * Stats endpoint (for monitoring dashboards)
+   * Platform-wide stats endpoint (for monitoring dashboards)
    */
   .get('/stats', async () => {
     try {
-      const [conversationStats, orderStats] = await Promise.all([
-        conversationRepository.getConversationStats(),
-        orderRepository.getOrderStats(),
+      const [
+        tenantCount,
+        activeTenantCount,
+        conversationCount,
+        orderCount,
+      ] = await Promise.all([
+        TenantModel.countDocuments(),
+        TenantModel.countDocuments({ isActive: true }),
+        ConversationModel.countDocuments(),
+        OrderModel.countDocuments(),
       ]);
+
+      // Get order stats by status
+      const orderStats = await OrderModel.aggregate([
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const ordersByStatus: Record<string, number> = {};
+      orderStats.forEach(({ _id, count }) => {
+        ordersByStatus[_id] = count;
+      });
+
+      // Get conversation stats by state
+      const conversationStats = await ConversationModel.aggregate([
+        {
+          $group: {
+            _id: '$state',
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const conversationsByState: Record<string, number> = {};
+      conversationStats.forEach(({ _id, count }) => {
+        conversationsByState[_id] = count;
+      });
 
       return {
         timestamp: new Date().toISOString(),
-        conversations: conversationStats,
-        orders: orderStats,
+        tenants: {
+          total: tenantCount,
+          active: activeTenantCount,
+        },
+        conversations: {
+          total: conversationCount,
+          byState: conversationsByState,
+        },
+        orders: {
+          total: orderCount,
+          byStatus: ordersByStatus,
+        },
       };
     } catch (error) {
       return {
@@ -62,4 +111,3 @@ export const healthRoutes = new Elysia()
       };
     }
   });
-

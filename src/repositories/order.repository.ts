@@ -4,7 +4,7 @@ import { BaseRepository } from './base.repository';
 import { nanoid } from 'nanoid';
 
 /**
- * Order Repository
+ * Order Repository - Multi-tenant aware
  */
 export class OrderRepository extends BaseRepository<OrderDocument> {
   constructor() {
@@ -21,12 +21,18 @@ export class OrderRepository extends BaseRepository<OrderDocument> {
   }
 
   /**
-   * Create a new order
+   * Create a new order for a specific tenant
    */
-  async createOrder(dto: CreateOrderDto, paymentLinkId: string, paymentLinkUrl: string): Promise<OrderDocument> {
+  async createOrder(
+    tenantId: string,
+    dto: CreateOrderDto,
+    paymentLinkId: string,
+    paymentLinkUrl: string
+  ): Promise<OrderDocument> {
     const orderId = this.generateOrderId();
-    
+
     return this.create({
+      tenantId,
       orderId,
       phoneNumber: dto.phoneNumber,
       customerName: dto.customerName,
@@ -46,47 +52,56 @@ export class OrderRepository extends BaseRepository<OrderDocument> {
   }
 
   /**
-   * Find order by order ID
+   * Find order by order ID for a specific tenant
    */
-  async findByOrderId(orderId: string): Promise<OrderDocument | null> {
-    return this.findOne({ orderId });
+  async findByOrderId(tenantId: string, orderId: string): Promise<OrderDocument | null> {
+    return this.findOne({ tenantId, orderId });
   }
 
   /**
-   * Find order by payment link ID
+   * Find order by payment link ID for a specific tenant
    */
-  async findByPaymentLinkId(paymentLinkId: string): Promise<OrderDocument | null> {
+  async findByPaymentLinkId(tenantId: string, paymentLinkId: string): Promise<OrderDocument | null> {
+    return this.findOne({ tenantId, 'payment.paymentLinkId': paymentLinkId });
+  }
+
+  /**
+   * Find order by payment link ID (global - for webhook handling)
+   */
+  async findByPaymentLinkIdGlobal(paymentLinkId: string): Promise<OrderDocument | null> {
     return this.findOne({ 'payment.paymentLinkId': paymentLinkId });
   }
 
   /**
-   * Find orders by phone number
+   * Find orders by phone number for a specific tenant
    */
   async findByPhoneNumber(
+    tenantId: string,
     phoneNumber: string,
     limit = 10
   ): Promise<OrderDocument[]> {
     return this.find(
-      { phoneNumber },
+      { tenantId, phoneNumber },
       { sort: { createdAt: -1 }, limit }
     );
   }
 
   /**
-   * Update order status
+   * Update order status for a specific tenant
    */
   async updateStatus(
+    tenantId: string,
     orderId: string,
     status: OrderStatus
   ): Promise<OrderDocument | null> {
     return this.update(
-      { orderId },
+      { tenantId, orderId },
       { status, updatedAt: new Date() }
     );
   }
 
   /**
-   * Mark order as paid
+   * Mark order as paid (uses global lookup since webhook may not have tenant context)
    */
   async markAsPaid(
     orderId: string,
@@ -107,7 +122,7 @@ export class OrderRepository extends BaseRepository<OrderDocument> {
   }
 
   /**
-   * Mark payment as expired
+   * Mark payment as expired (uses global lookup since webhook may not have tenant context)
    */
   async markPaymentExpired(paymentLinkId: string): Promise<OrderDocument | null> {
     return this.update(
@@ -121,33 +136,56 @@ export class OrderRepository extends BaseRepository<OrderDocument> {
   }
 
   /**
-   * Get orders by status
+   * Get orders by status for a specific tenant
    */
   async findByStatus(
+    tenantId: string,
     status: OrderStatus,
     limit = 50
   ): Promise<OrderDocument[]> {
     return this.find(
-      { status },
+      { tenantId, status },
       { sort: { createdAt: -1 }, limit }
     );
   }
 
   /**
-   * Get order statistics
+   * Get all orders for a tenant (paginated)
    */
-  async getOrderStats(startDate?: Date, endDate?: Date): Promise<{
+  async findByTenant(
+    tenantId: string,
+    options?: { limit?: number; skip?: number; status?: OrderStatus }
+  ): Promise<OrderDocument[]> {
+    const filter: Record<string, unknown> = { tenantId };
+    if (options?.status) {
+      filter.status = options.status;
+    }
+    return this.find(filter, {
+      sort: { createdAt: -1 },
+      limit: options?.limit || 50,
+      skip: options?.skip || 0,
+    });
+  }
+
+  /**
+   * Get order statistics for a specific tenant
+   */
+  async getOrderStats(
+    tenantId: string,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<{
     totalOrders: number;
     totalRevenue: number;
     byStatus: Record<OrderStatus, number>;
   }> {
-    const dateFilter: Record<string, unknown> = {};
-    if (startDate) dateFilter.$gte = startDate;
-    if (endDate) dateFilter.$lte = endDate;
+    const matchStage: Record<string, unknown> = { tenantId };
 
-    const matchStage = Object.keys(dateFilter).length > 0
-      ? { createdAt: dateFilter }
-      : {};
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) (matchStage.createdAt as Record<string, Date>).$gte = startDate;
+      if (endDate) (matchStage.createdAt as Record<string, Date>).$lte = endDate;
+    }
 
     const pipeline = [
       { $match: matchStage },
@@ -192,4 +230,3 @@ export class OrderRepository extends BaseRepository<OrderDocument> {
 
 // Singleton instance
 export const orderRepository = new OrderRepository();
-

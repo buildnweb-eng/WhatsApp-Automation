@@ -1,16 +1,21 @@
 import { Elysia, t } from 'elysia';
 import { logger } from '@/utils/logger';
-import { conversationRepository, orderRepository } from '@/repositories';
-import { whatsappService } from '@/services';
+import { OrderModel } from '@/domain/models/order.model';
+import { ConversationModel } from '@/domain/models/conversation.model';
+import { WhatsAppService } from '@/services/whatsapp.service';
 import { OrderStatus } from '@/domain/types';
 
+// Legacy single-tenant WhatsApp service (for backward compatibility)
+const whatsappService = new WhatsAppService();
+
 /**
- * Admin Routes (for internal use/dashboard)
+ * Admin Routes (LEGACY - for single-tenant use)
+ * For multi-tenant, use /api/tenants/:tenantId/* endpoints instead
  * In production, protect these with authentication
  */
 export const adminRoutes = new Elysia({ prefix: '/admin' })
   /**
-   * Get all orders
+   * Get all orders (across all tenants - for platform admin)
    */
   .get(
     '/orders',
@@ -18,17 +23,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       const status = query.status as OrderStatus | undefined;
       const limit = query.limit ? parseInt(query.limit) : 50;
 
+      const filter: Record<string, unknown> = {};
       if (status) {
-        const orders = await orderRepository.findByStatus(status, limit);
-        return { orders, count: orders.length };
+        filter.status = status;
       }
 
-      // Get recent orders
-      const orders = await orderRepository.find({}, { 
-        sort: { createdAt: -1 }, 
-        limit 
-      });
-      
+      const orders = await OrderModel.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean();
+
       return { orders, count: orders.length };
     },
     {
@@ -45,12 +49,12 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   .get(
     '/orders/:orderId',
     async ({ params }) => {
-      const order = await orderRepository.findByOrderId(params.orderId);
-      
+      const order = await OrderModel.findOne({ orderId: params.orderId }).lean();
+
       if (!order) {
         return new Response('Order not found', { status: 404 });
       }
-      
+
       return order;
     },
     {
@@ -67,28 +71,37 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     '/orders/:orderId/status',
     async ({ params, body }) => {
       const { status } = body as { status: OrderStatus };
-      
-      const order = await orderRepository.updateStatus(params.orderId, status);
-      
+
+      const order = await OrderModel.findOneAndUpdate(
+        { orderId: params.orderId },
+        { status, updatedAt: new Date() },
+        { new: true }
+      ).lean();
+
       if (!order) {
         return new Response('Order not found', { status: 404 });
       }
 
-      // Notify customer of status change
-      if (status === OrderStatus.SHIPPED) {
-        await whatsappService.sendTextMessage(
-          order.phoneNumber,
-          `📦 Your order ${order.orderId} has been shipped! You'll receive tracking details soon.`
-        );
+      // Note: For multi-tenant, use tenant-specific WhatsApp service
+      // This legacy route uses default config
+      try {
+        if (status === OrderStatus.SHIPPED) {
+          await whatsappService.sendTextMessage(
+            order.phoneNumber,
+            `📦 Your order ${order.orderId} has been shipped! You'll receive tracking details soon.`
+          );
+        }
+
+        if (status === OrderStatus.DELIVERED) {
+          await whatsappService.sendTextMessage(
+            order.phoneNumber,
+            `✅ Your order ${order.orderId} has been delivered! Thank you for shopping with us. 🙏`
+          );
+        }
+      } catch (error) {
+        logger.warn({ error, orderId: params.orderId }, 'Failed to send status update message');
       }
 
-      if (status === OrderStatus.DELIVERED) {
-        await whatsappService.sendTextMessage(
-          order.phoneNumber,
-          `✅ Your order ${order.orderId} has been delivered! Thank you for shopping with us. 🙏`
-        );
-      }
-      
       return order;
     },
     {
@@ -107,7 +120,10 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   .get(
     '/customers/:phone/orders',
     async ({ params }) => {
-      const orders = await orderRepository.findByPhoneNumber(params.phone);
+      const orders = await OrderModel.find({ phoneNumber: params.phone })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
       return { orders, count: orders.length };
     },
     {
@@ -123,12 +139,12 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   .get(
     '/conversations/:phone',
     async ({ params }) => {
-      const conversation = await conversationRepository.findByPhoneNumber(params.phone);
-      
+      const conversation = await ConversationModel.findOne({ phoneNumber: params.phone }).lean();
+
       if (!conversation) {
         return new Response('Conversation not found', { status: 404 });
       }
-      
+
       return conversation;
     },
     {
@@ -144,12 +160,25 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   .post(
     '/conversations/:phone/reset',
     async ({ params }) => {
-      const conversation = await conversationRepository.resetConversation(params.phone);
-      
+      const conversation = await ConversationModel.findOneAndUpdate(
+        { phoneNumber: params.phone },
+        {
+          state: 'BROWSING',
+          cart: undefined,
+          address: undefined,
+          orderId: undefined,
+          paymentLinkId: undefined,
+          paymentLinkUrl: undefined,
+          lastMessageAt: new Date(),
+          updatedAt: new Date(),
+        },
+        { new: true }
+      ).lean();
+
       if (!conversation) {
         return new Response('Conversation not found', { status: 404 });
       }
-      
+
       logger.info({ phone: params.phone }, '🔄 Conversation reset by admin');
       return conversation;
     },
@@ -162,14 +191,15 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   /**
    * Send manual message (for support)
+   * Note: Uses default WhatsApp config - for multi-tenant use tenant routes
    */
   .post(
     '/send-message',
     async ({ body }) => {
       const { phone, message } = body as { phone: string; message: string };
-      
+
       await whatsappService.sendTextMessage(phone, message);
-      
+
       logger.info({ phone }, '📤 Manual message sent by admin');
       return { success: true };
     },
@@ -180,4 +210,3 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       }),
     }
   );
-

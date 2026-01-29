@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 import { ConversationState, type Cart } from '../types/conversation.types';
 
 export interface ConversationDocument extends Document {
+  tenantId: string;
   phoneNumber: string;
   customerName?: string;
   state: ConversationState;
@@ -33,10 +34,14 @@ const CartSchema = new Schema({
 
 const ConversationSchema = new Schema<ConversationDocument>(
   {
+    tenantId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     phoneNumber: {
       type: String,
       required: true,
-      unique: true,
       index: true,
     },
     customerName: {
@@ -75,8 +80,11 @@ const ConversationSchema = new Schema<ConversationDocument>(
   }
 );
 
-// Index for finding stale conversations
-ConversationSchema.index({ lastMessageAt: 1, state: 1 });
+// Compound indexes for multi-tenant queries
+ConversationSchema.index({ tenantId: 1, phoneNumber: 1 }, { unique: true });
+ConversationSchema.index({ tenantId: 1, lastMessageAt: 1, state: 1 });
+ConversationSchema.index({ tenantId: 1, paymentLinkId: 1 });
+ConversationSchema.index({ tenantId: 1, orderId: 1 });
 
 export const ConversationModel = mongoose.model<ConversationDocument>(
   'Conversation',

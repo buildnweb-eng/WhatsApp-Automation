@@ -2,21 +2,49 @@ import axios, { AxiosInstance } from 'axios';
 import { config } from '@/config/env';
 import { logger } from '@/utils/logger';
 import type { WhatsAppButton, WhatsAppProductSection } from '@/domain/types';
+import type { WhatsAppConfig } from '@/domain/types/tenant.types';
 
 /**
  * WhatsApp Cloud API Service
+ * Can be instantiated with tenant-specific config or use global config
  */
 export class WhatsAppService {
   private readonly api: AxiosInstance;
+  private readonly serviceConfig: WhatsAppConfig;
+  private readonly businessPhone: string;
 
-  constructor() {
-    this.api = axios.create({
-      baseURL: `${config.whatsapp.apiUrl}/${config.whatsapp.phoneNumberId}`,
-      headers: {
-        'Authorization': `Bearer ${config.whatsapp.accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
+  constructor(tenantConfig?: { whatsapp: WhatsAppConfig; businessPhone: string }) {
+    // Use tenant config if provided, otherwise fall back to global config
+    if (tenantConfig) {
+      this.serviceConfig = tenantConfig.whatsapp;
+      this.businessPhone = tenantConfig.businessPhone;
+      this.api = axios.create({
+        baseURL: `${tenantConfig.whatsapp.apiUrl}/${tenantConfig.whatsapp.phoneNumberId}`,
+        headers: {
+          'Authorization': `Bearer ${tenantConfig.whatsapp.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    } else {
+      // Legacy: use global config for backward compatibility
+      this.serviceConfig = {
+        apiUrl: config.whatsapp.apiUrl,
+        phoneNumberId: config.whatsapp.phoneNumberId,
+        businessAccountId: config.whatsapp.businessAccountId || '',
+        accessToken: config.whatsapp.accessToken,
+        verifyToken: config.whatsapp.verifyToken,
+        catalogId: config.whatsapp.catalogId,
+        apiVersion: 'v18.0',
+      };
+      this.businessPhone = config.business.phone;
+      this.api = axios.create({
+        baseURL: `${config.whatsapp.apiUrl}/${config.whatsapp.phoneNumberId}`,
+        headers: {
+          'Authorization': `Bearer ${config.whatsapp.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
   }
 
   /**
@@ -84,7 +112,7 @@ export class WhatsAppService {
       // If no thumbnail product ID is provided, send instructions instead
       if (!thumbnailProductId) {
         // Generate catalog link (clean phone number by removing + sign)
-        const phone = config.business.phone.replace('+', '');
+        const phone = this.businessPhone.replace('+', '');
         const catalogLink = `https://wa.me/c/${phone}`;
 
         await this.api.post('/messages', {
@@ -155,7 +183,7 @@ export class WhatsAppService {
                 type: 'product',
                 product: {
                   product_retailer_id: productId,
-                  catalog_id: config.whatsapp.catalogId,
+                  catalog_id: this.serviceConfig.catalogId,
                 },
               },
             ],
@@ -204,7 +232,7 @@ export class WhatsAppService {
             text: bodyText || 'Check out this item!',
           },
           action: {
-            catalog_id: config.whatsapp.catalogId,
+            catalog_id: this.serviceConfig.catalogId,
             product_retailer_id: productRetailerId,
           },
         },
@@ -242,7 +270,7 @@ export class WhatsAppService {
             text: bodyText,
           },
           action: {
-            catalog_id: config.whatsapp.catalogId,
+            catalog_id: this.serviceConfig.catalogId,
             sections,
           },
         },

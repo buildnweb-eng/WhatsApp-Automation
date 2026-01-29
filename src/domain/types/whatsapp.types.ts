@@ -139,7 +139,7 @@ export interface WhatsAppWebhookPayload {
 }
 
 /**
- * Processed Message Context
+ * Processed Message Context - Multi-tenant aware
  */
 export interface ProcessedMessageContext {
   from: string;
@@ -147,6 +147,9 @@ export interface ProcessedMessageContext {
   type: WhatsAppMessageType;
   message: WhatsAppIncomingMessage;
   timestamp: Date;
+  // Tenant context (from webhook metadata)
+  tenantId: string;
+  phoneNumberId: string;
 }
 
 /**
