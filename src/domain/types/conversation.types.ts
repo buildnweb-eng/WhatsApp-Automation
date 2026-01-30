@@ -1,3 +1,5 @@
+import type { PendingAddress } from './location.types';
+
 /**
  * Conversation State Machine States
  */
@@ -42,6 +44,7 @@ export interface Conversation {
   state: ConversationState;
   cart?: Cart;
   address?: string;
+  pendingAddress?: PendingAddress;
   orderId?: string;
   paymentLinkId?: string;
   paymentLinkUrl?: string;
@@ -58,6 +61,7 @@ export interface ConversationUpdate {
   state?: ConversationState;
   cart?: Cart;
   address?: string;
+  pendingAddress?: PendingAddress | null;
   orderId?: string;
   paymentLinkId?: string;
   paymentLinkUrl?: string;

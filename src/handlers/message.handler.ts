@@ -9,6 +9,7 @@ import {
   type ProcessedMessageContext,
   type WhatsAppOrderMessage,
   type WhatsAppInteractiveMessage,
+  type WhatsAppLocationMessage,
 } from '@/domain/types';
 import type { TenantConfig } from '@/domain/types/tenant.types';
 import type { ConversationDocument } from '@/domain/models';
@@ -56,6 +57,10 @@ export class MessageHandler {
 
         case 'interactive':
           await this.handleInteractiveMessage(from, message.interactive!, conversation, tenantConfig, whatsappService);
+          break;
+
+        case 'location':
+          await this.handleLocationMessage(from, message.location!, conversation, tenantConfig, whatsappService);
           break;
 
         default:
@@ -213,6 +218,21 @@ export class MessageHandler {
           await this.sendHelpMessage(from, tenantConfig, whatsappService);
           break;
 
+        case 'confirm_address':
+          await orderHandler.confirmPendingAddress(from, conversation, tenantConfig);
+          break;
+
+        case 'enter_manually':
+          await orderHandler.rejectPendingAddress(from, tenantConfig);
+          break;
+
+        case 'share_location_again':
+          await whatsappService.sendTextMessage(
+            from,
+            "Please share your location again by tapping 📎 → Location → Share your current location"
+          );
+          break;
+
         default:
           logger.warn({ buttonId, tenantId }, '⚠️ Unknown button clicked');
       }
@@ -223,6 +243,37 @@ export class MessageHandler {
       logger.debug({ from, listId, tenantId }, '📋 List item selected');
       // Handle list selections if needed
     }
+  }
+
+  /**
+   * Handle location messages
+   */
+  private async handleLocationMessage(
+    from: string,
+    location: WhatsAppLocationMessage,
+    conversation: ConversationDocument,
+    tenantConfig: TenantConfig,
+    whatsappService: WhatsAppService
+  ): Promise<void> {
+    const tenantId = tenantConfig.tenantId;
+
+    logger.info(
+      { from, lat: location.latitude, lon: location.longitude, tenantId },
+      '📍 Handling location message'
+    );
+
+    // Only process location if we're awaiting address
+    if (conversation.state !== ConversationState.AWAITING_ADDRESS) {
+      await whatsappService.sendTextMessage(
+        from,
+        "Thanks for sharing your location! 📍\n\n" +
+        "To use this as your delivery address, please first add items to your cart and send your order."
+      );
+      return;
+    }
+
+    // Delegate to order handler for geocoding and confirmation
+    await orderHandler.processLocationAddress(from, location, conversation, tenantConfig);
   }
 
   /**
@@ -395,11 +446,13 @@ export class MessageHandler {
     });
 
     summary += `\n*Total: ₹${total}*\n\n`;
-    summary += `📍 To calculate shipping and generate your bill, please reply with your *complete delivery address* including:\n`;
-    summary += `• House/Flat number\n`;
-    summary += `• Street name\n`;
-    summary += `• City, State\n`;
-    summary += `• PIN code`;
+    summary += `📍 *Delivery Address Required*\n\n`;
+    summary += `You can provide your address in two ways:\n\n`;
+    summary += `1️⃣ *Share Location* - Tap 📎 → Location → Share your current location\n\n`;
+    summary += `2️⃣ *Type Address* - Reply with your complete address including:\n`;
+    summary += `   • House/Flat number\n`;
+    summary += `   • Street name\n`;
+    summary += `   • City, State, PIN code`;
 
     return summary;
   }

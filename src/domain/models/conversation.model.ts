@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { ConversationState, type Cart } from '../types/conversation.types';
+import type { PendingAddress } from '../types/location.types';
 
 export interface ConversationDocument extends Document {
   tenantId: string;
@@ -8,6 +9,7 @@ export interface ConversationDocument extends Document {
   state: ConversationState;
   cart?: Cart;
   address?: string;
+  pendingAddress?: PendingAddress;
   orderId?: string;
   paymentLinkId?: string;
   paymentLinkUrl?: string;
@@ -30,6 +32,15 @@ const CartSchema = new Schema({
   items: [CartItemSchema],
   totalInPaise: { type: Number, required: true },
   totalInRupees: { type: Number, required: true },
+}, { _id: false });
+
+const PendingAddressSchema = new Schema({
+  text: { type: String, required: true },
+  source: { type: String, enum: ['location', 'text'], required: true },
+  location: {
+    latitude: { type: Number },
+    longitude: { type: Number },
+  },
 }, { _id: false });
 
 const ConversationSchema = new Schema<ConversationDocument>(
@@ -57,6 +68,9 @@ const ConversationSchema = new Schema<ConversationDocument>(
     },
     address: {
       type: String,
+    },
+    pendingAddress: {
+      type: PendingAddressSchema,
     },
     orderId: {
       type: String,

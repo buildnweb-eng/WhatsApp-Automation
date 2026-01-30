@@ -1,7 +1,12 @@
+import type { WhatsAppLocationMessage } from './location.types';
+
+// Re-export for convenience
+export type { WhatsAppLocationMessage } from './location.types';
+
 /**
  * WhatsApp Message Types
  */
-export type WhatsAppMessageType = 
+export type WhatsAppMessageType =
   | 'text'
   | 'image'
   | 'audio'
@@ -93,6 +98,7 @@ export interface WhatsAppIncomingMessage {
   text?: WhatsAppTextMessage;
   order?: WhatsAppOrderMessage;
   interactive?: WhatsAppInteractiveMessage;
+  location?: WhatsAppLocationMessage;
 }
 
 /**

@@ -381,6 +381,69 @@ export class WhatsAppService {
       throw error;
     }
   }
+
+  /**
+   * Upload media (PDF, image, etc.) to WhatsApp servers
+   * Returns the media ID for use in document/image messages
+   */
+  async uploadMedia(filePath: string, mimeType: string): Promise<string> {
+    const FormData = (await import('form-data')).default;
+    const fs = await import('fs');
+
+    const formData = new FormData();
+    formData.append('file', fs.createReadStream(filePath));
+    formData.append('type', mimeType);
+    formData.append('messaging_product', 'whatsapp');
+
+    try {
+      const response = await axios.post(
+        `${this.serviceConfig.apiUrl}/${this.serviceConfig.phoneNumberId}/media`,
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${this.serviceConfig.accessToken}`,
+            ...formData.getHeaders(),
+          },
+        }
+      );
+
+      const mediaId = response.data.id;
+      logger.info({ mediaId, mimeType }, '✅ Media uploaded to WhatsApp');
+      return mediaId;
+    } catch (error) {
+      logger.error({ error, filePath, mimeType }, '❌ Failed to upload media');
+      throw error;
+    }
+  }
+
+  /**
+   * Send a document message (PDF, etc.)
+   */
+  async sendDocumentMessage(
+    to: string,
+    mediaId: string,
+    filename: string,
+    caption?: string
+  ): Promise<void> {
+    try {
+      await this.api.post('/messages', {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'document',
+        document: {
+          id: mediaId,
+          filename,
+          caption: caption || '',
+        },
+      });
+
+      logger.info({ to, filename }, '✅ Document message sent');
+    } catch (error) {
+      logger.error({ error, to, filename }, '❌ Failed to send document message');
+      throw error;
+    }
+  }
 }
 
 // Singleton instance
